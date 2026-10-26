@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>webscale-edge-lab</title>
+<link rel="icon" href="data:,">
+<style>
+:root{--bg:#f7f7f5;--fg:#1c1c1a;--mut:#6b6b66;--card:#fff;--line:#dcdcd6;--ok:#1b7f4b;--bad:#b3261e;--link:#3b6fd4;--hp:#3b6fd4;--en:#9a6700;--c0:#3b6fd4;--c1:#1b7f4b;--c2:#9a6700}
+@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--mut:#9a9a94;--card:#1d1d1b;--line:#333330;--ok:#3fb97a;--bad:#e06666;--link:#6d9bf0;--hp:#6d9bf0;--en:#e5a824;--c0:#6d9bf0;--c1:#3fb97a;--c2:#e5a824}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 8px}h3{font-size:14px;margin:0 0 4px}p{margin:6px 0}.mut{color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;overflow-x:auto}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:4px 8px;border-bottom:1px solid var(--line);text-align:left}
+td.n{text-align:right;font-variant-numeric:tabular-nums}.hp{color:var(--hp);font-weight:600}.en{color:var(--en);font-weight:600}
+svg{width:100%;height:auto;display:block}svg text{fill:var(--mut);font:10px system-ui}
+.lg span{margin-right:12px;font-size:12px}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
+details{margin:6px 0}summary{cursor:pointer;font-size:13px}pre{margin:6px 0 0;font:12px/1.4 ui-monospace,Menlo,monospace;overflow:auto;max-height:320px}
+a{color:var(--link)}code{font:13px ui-monospace,Menlo,monospace}
+.note{border-left:3px solid var(--en);padding-left:10px;margin:8px 0}
+</style>
+</head>
+<body>
+<main>
+<h1>webscale-edge-lab</h1>
+<p class="mut">The same load-balancing situations run through real HAProxy and Envoy processes in front of small Go backends that can crash, return errors, slow down, fail their health check or be replaced. Everything below is recorded by <code>cmd/record</code> from real client requests on one machine. Personal learning project: loopback only, no VIPs, no real network, no production traffic.</p>
+
+<h2>What clients saw</h2>
+<div class="card"><table id="sum"></table></div>
+
+<h2>A backend crashes at 1.5 s and returns at 4 s</h2>
+<div class="two" id="crash"></div>
+
+<h2>Rolling deploy: all three backends replaced one by one under load</h2>
+<div class="two" id="roll"></div>
+
+<h2>A backend returns 503 while its health check says healthy</h2>
+<div class="card"><div id="errs"></div>
+<p class="mut">Active health checks only call <code>/healthz</code>, so they never notice. Plain HAProxy keeps sending it a third of the traffic. HAProxy with <code>observe layer7</code> and Envoy's outlier detection both eject it, then let it back after a pause and have to see errors again before ejecting once more, which is why neither reaches zero.</p></div>
+
+<h2>Who moves when a backend is removed (300 users, header hash)</h2>
+<div class="card"><div id="hash"></div></div>
+
+<h2>Things that bit me</h2>
+<div class="card">
+<div class="note"><b>Envoy: <code>max_ejection_percent</code> defaults to 10%.</b> With 3 backends that means none may be ejected. Outlier detection detected 33 consecutive-5xx failures and enforced 0 (<code>ejections_overflow</code> counted them). I set it to 50.</div>
+<div class="note"><b>Envoy: health checks ran far less often than configured.</b> The admin stats showed 3 successful checks in 4 seconds against a 0.3 s interval. I believe <code>no_traffic_interval</code> (default 60 s) was applying because the proxy-to-backend connections were kept alive and no new connections were opened. A crashed backend was not marked unhealthy and stayed in rotation, hidden by connect-failure retries. Setting <code>no_traffic_interval</code> to the check interval fixed it (check counts went to 42 in the same window).</div>
+<div class="note"><b>HAProxy: no passive health checking by default.</b> A backend with working health checks and failing requests keeps its share of traffic until <code>observe layer7</code> is added.</div>
+<div class="note"><b>Overload is handled differently.</b> HAProxy queues requests for a free slot and answers 503 after the queue timeout (about 300 ms here). Envoy's circuit breaker answers 503 within a few milliseconds.</div>
+<div class="note"><b>Envoy's ring hash is not perfectly stable.</b> Removing a backend rebuilds the ring over the remaining hosts, so about 19% of users who were not on the removed backend moved, against 0% for HAProxy's consistent hash and about 49% for HAProxy's default map-based hash.</div>
+</div>
+
+<h2>The configuration used</h2>
+<div class="card"><details><summary>HAProxy (round robin, passive checks on)</summary><pre id="cfgh"></pre></details><details><summary>Envoy (round robin)</summary><pre id="cfge"></pre></details></div>
+
+<h2>Not covered</h2>
+<div class="card"><p>Virtual IPs and failover between load balancers (keepalived, VRRP), BGP and ECMP, anycast, L4 balancing and Maglev-style hashing, TLS termination, HTTP/2 and gRPC, multiple hosts, real network latency, and any throughput benchmark. Envoy ran with <code>--concurrency 1</code> so round robin is deterministic; with several worker threads each balances independently. HAProxy 3.4.4 and Envoy 1.38.3 on macOS.</p></div>
+
+<h2>References</h2>
+<div class="card"><ul>
+<li>HAProxy: <a href="https://docs.haproxy.org/3.0/configuration.html">configuration manual</a> and <a href="https://docs.haproxy.org/3.0/management.html">management guide</a> (stick tables, health checks, <code>observe</code>, <code>hash-type</code>, runtime API)</li>
+<li>Envoy: <a href="https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/health_checking">health checking</a>, <a href="https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/outlier">outlier detection</a>, <a href="https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/circuit_breaking">circuit breaking</a>, <a href="https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancers">load balancers</a></li>
+<li>Google SRE Book: <a href="https://sre.google/sre-book/load-balancing-frontend/">Load Balancing at the Frontend</a> and <a href="https://sre.google/sre-book/load-balancing-datacenter/">in the Datacenter</a></li>
+<li>Eisenbud et al., <a href="https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/">Maglev: A Fast and Reliable Software Network Load Balancer</a></li>
+</ul></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const C=['var(--c0)','var(--c1)','var(--c2)'];
+fetch('data.json').then(r=>r.json()).then(D=>{
+  const R=D.results, get=(s,v)=>R.find(x=>x.scenario===s&&x.variant===v);
+  const m=(s,v,k)=>{const r=get(s,v);return r?r.Metrics?r.Metrics[k]:r.metrics[k]:undefined};
+  const M=(s,v,k)=>{const r=get(s,v);return r&&r.metrics?r.metrics[k]:undefined};
+  const f=x=>x===undefined?'':(typeof x==='number'&&!Number.isInteger(x)?(x*100).toFixed(0)+'%':x);
+  const rows=[
+   ['Even spread (3 backends, 600 requests)','max deviation from even','distribution','maxDeviationFromEven'],
+   ['Backend crash','client errors after the crash','backend-crash','clientErrorsAfterCrash'],
+   ['Backend crash','ms until restarted backend serves again','backend-crash','msUntilRestartedBackendServesAgain'],
+   ['Failing health check','ms until traffic stops','health-check-drain','msUntilTrafficStops'],
+   ['Rolling deploy of all 3 backends','failed requests','rolling-deploy','errors'],
+   ['Overload (cap 2 per backend, 150 ms work)','requests shed with 503','overload','shed503'],
+   ['Overload','median ms of a 503','overload','shedP50Ms'],
+   ['Overload','p95 ms of a request that succeeded','overload','okP95Ms']];
+  let h='<tr><th>Situation</th><th>Measure</th><th class="hp">HAProxy</th><th class="en">Envoy</th></tr>';
+  rows.forEach(r=>h+='<tr><td>'+r[0]+'</td><td>'+r[1]+'</td><td class="n">'+f(M(r[2],'haproxy',r[3]))+'</td><td class="n">'+f(M(r[2],'envoy',r[3]))+'</td></tr>');
+  const rl=M('rate-limit','haproxy','noisy429');
+  h+='<tr><td>Per-client rate limit 40/s (HAProxy only)</td><td>noisy client got 429 / quiet client failures</td><td class="n">'+rl+' / '+M('rate-limit','haproxy','quietFailed')+'</td><td class="n">not built</td></tr>';
+  $('sum').innerHTML=h;
+
+  function stack(r){
+    const names=Object.keys(r.byBackend).sort(), n=r.timeline.length, W=460,H=180,L=28,B=18,max=Math.max(...r.timeline.map(b=>b.ok+b.err),1);
+    const bw=(W-L)/n;let g='';
+    r.timeline.forEach((b,i)=>{let y=H-B;names.forEach((nm,k)=>{const v=r.byBackend[nm][i]/max*(H-B-8);y-=v;g+='<rect x="'+(L+i*bw)+'" y="'+y+'" width="'+(bw-.5)+'" height="'+v+'" fill="'+C[k]+'"/>'});
+      if(b.err){const v=b.err/max*(H-B-8);y-=v;g+='<rect x="'+(L+i*bw)+'" y="'+y+'" width="'+(bw-.5)+'" height="'+v+'" fill="var(--bad)"/>'}});
+    for(let t=0;t<=n*0.25;t+=2)g+='<text x="'+(L+t/0.25*bw)+'" y="'+(H-4)+'">'+t+'s</text>';
+    return '<svg viewBox="0 0 '+W+' '+H+'" role="img">'+g+'</svg>';
+  }
+  const legend='<p class="lg"><span><i class="sw" style="background:var(--c0)"></i>b0</span><span><i class="sw" style="background:var(--c1)"></i>b1</span><span><i class="sw" style="background:var(--c2)"></i>b2</span><span><i class="sw" style="background:var(--bad)"></i>failed</span><span class="mut">requests answered per 250 ms</span></p>';
+  ['crash:backend-crash','roll:rolling-deploy'].forEach(p=>{const [id,sc]=p.split(':');
+    $(id).innerHTML=['haproxy','envoy'].map(v=>{const r=get(sc,v);return '<div class="card"><h3 class="'+(v==='haproxy'?'hp':'en')+'">'+v+'</h3>'+stack(r)+'<p class="mut">'+(sc==='backend-crash'?r.metrics.errors+' failed requests in total. Restarted backend served again '+r.metrics.msUntilRestartedBackendServesAgain+' ms after restart.':r.metrics.requests+' requests, '+r.metrics.errors+' failed.')+'</p></div>'}).join('')+'<div style="grid-column:1/-1">'+legend+'</div>';});
+
+  const ev=['haproxy','haproxy+passive','envoy'].map(v=>[v,M('backend-errors',v,'errorRateAfter')]);
+  $('errs').innerHTML='<svg viewBox="0 0 460 120" role="img">'+ev.map((e,i)=>'<text x="0" y="'+(24+i*32)+'">'+e[0]+'</text><rect x="110" y="'+(12+i*32)+'" width="'+(e[1]*230/0.4)+'" height="16" fill="'+(i===0?'var(--bad)':'var(--c1)')+'"/><text x="'+(116+e[1]*230/0.4)+'" y="'+(24+i*32)+'">'+(e[1]*100).toFixed(0)+'% of requests failed</text>').join('')+'</svg>';
+
+  const hs=[['haproxy/hash-consistent','HAProxy consistent hash'],['haproxy/hash-modulo','HAProxy default (map-based) hash'],['envoy/hash-consistent','Envoy ring hash']];
+  $('hash').innerHTML='<svg viewBox="0 0 460 120" role="img">'+hs.map((e,i)=>{const v=get('consistent-hash',e[0]).metrics.unrelatedMovedFraction;return '<text x="0" y="'+(24+i*32)+'">'+e[1]+'</text><rect x="170" y="'+(12+i*32)+'" width="'+Math.max(2,v*170/0.6)+'" height="16" fill="'+(v<0.05?'var(--c1)':v<0.3?'var(--c2)':'var(--bad)')+'"/><text x="'+(176+Math.max(2,v*170/0.6))+'" y="'+(24+i*32)+'">'+(v*100).toFixed(0)+'% of unaffected users moved</text>'}).join('')+'</svg><p class="mut">Every user always reached the same backend on repeat. Users who were on the removed backend are re-homed in every case; the bars show users who were <em>not</em> on it and still changed backend.</p>';
+  $('cfgh').textContent=D.configs.haproxy;$('cfge').textContent=D.configs.envoy;
+}).catch(e=>{document.querySelector('main p').textContent='Could not load data.json. Serve this folder over HTTP: python3 -m http.server -d docs'});
+</script>
+</body>
+</html>

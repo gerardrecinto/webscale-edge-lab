@@ -1,0 +1,25 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: Install HAProxy
+        run: sudo apt-get update && sudo apt-get install -y haproxy && haproxy -v | head -1 && sudo systemctl stop haproxy || true
+      - name: Get an Envoy binary from the official image
+        run: |
+          docker create --name envoy-src envoyproxy/envoy:v1.31-latest
+          mkdir -p "$HOME/bin"
+          docker cp envoy-src:/usr/local/bin/envoy "$HOME/bin/envoy"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          "$HOME/bin/envoy" --version | head -1
+      - run: go vet ./...
+      - run: go test ./... -count=1 -v
