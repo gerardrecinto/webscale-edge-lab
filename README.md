@@ -30,6 +30,59 @@ Tests skip a proxy if its binary is not on `PATH`.
 - **Envoy's ring hash is not perfectly stable.** Removing a backend rebuilds the ring over the remaining hosts, and about 19% of users who were not on the removed backend moved. HAProxy's consistent hash moved none; HAProxy's default map-based hash moved 49%.
 - Envoy runs with `--concurrency 1`, because each worker thread balances independently and round robin would otherwise be approximate.
 
+## Regional failover drill (lab model, not production)
+
+A second part of the lab models active-passive failover between two regions, as loopback HTTP servers in one process. Replication is async and lagged on purpose, so the data loss is real and measurable.
+
+What is in `failover/`:
+
+- **Fencing epoch + lease.** Each failover takes a new epoch from a fence store. The old primary only accepts writes while the orchestrator keeps renewing its lease, so if the fence call cannot reach it, the orchestrator waits out the lease before promoting. Writes with a stale epoch get 409.
+- **Quorum of probers.** 3 probers, each needs 3 consecutive failures, 2 of 3 must agree. One blind prober does not trigger a failover (tested).
+- **Replication lag gate (RPO).** The replica must be within `MaxLagOps` writes of the highest sequence any prober saw, otherwise failover is refused until an operator sets force.
+- **Client circuit breaker.** Opens after 3 consecutive failures, half-open probe after 100 ms.
+- **Chaos.** Per-region injected delay, 503 rate and dropped traffic from a named caller (used to partition the orchestrator from a primary the clients can still reach).
+
+Run it (`go run ./cmd/failover-drill`, about 12 s, output from my laptop):
+
+```
+== crash
+   +   119ms quorum says primary down
+   +   120ms epoch 2 issued
+   +   120ms fence unreachable, waiting 199ms for the lease to lapse
+   +   320ms promoted us-east-1 at epoch 2
+   writes acked 240, client errors 65, breaker rejected calls: true
+   detect 119ms  RTO 330ms  lost writes 9 (RPO window 39ms)  stale writes accepted after promote 0  lag gate hit: false
+
+== partition
+   +   120ms quorum says primary down
+   +   120ms epoch 2 issued
+   +   220ms fence unreachable, waiting 61ms for the lease to lapse
+   +   282ms promoted us-east-1 at epoch 2
+   writes acked 293, client errors 23, breaker rejected calls: true
+   detect 120ms  RTO 380ms  lost writes 0 (RPO window 0ms)  stale writes accepted after promote 0  lag gate hit: false
+
+== laggate
+   +    80ms quorum says primary down
+   +    80ms failover refused: replica 151 writes behind, budget 20
+   +   600ms epoch 2 issued
+   +   600ms fence unreachable, lease already lapsed
+   +   601ms promoted us-east-1 at epoch 2
+   writes acked 241, client errors 128, breaker rejected calls: true
+   detect 80ms  RTO 639ms  lost writes 159 (RPO window 794ms)  stale writes accepted after promote 0  lag gate hit: true
+```
+
+How to read it: RTO is measured from the fault to the first write acknowledged by the new primary. In the crash run, about 200 ms of the 330 ms is the lease wait, which is the price of not being able to tell a dead primary from an unreachable one. The lost-write window in the crash run (39 ms) matches the 40 ms replication delay I configured, and the lag gate run lost 159 writes because the replica was 1.5 s behind and I forced the failover. Numbers shift a little between runs.
+
+Tests: `go test -race ./failover` covers the breaker states, stale-epoch and expired-lease rejection, the quorum, the gate (refuses, then force overrides) and the crash and partition drills.
+
+What I ran into:
+
+- **A slow lease renewal delayed failure detection.** My first version renewed the lease in the same loop as the probes. In the partition run the renewal hung for its whole 100 ms timeout on every tick, and detection took 341 ms instead of about 120 ms. Renewing in its own goroutine fixed it.
+- **The lag figure is a lower bound.** Once the primary is dead nobody can ask it for its sequence, so the gate uses the highest sequence a prober saw before the fault. Writes acknowledged between the last probe and the crash are not counted, so the real loss can be higher than the gate believed.
+- **Fencing needs a path to the old primary or a lease.** Fencing by epoch only works if the old primary learns the epoch. The lease is what covers the case where it cannot be reached, and it costs RTO.
+
+Not covered: a real fence store outside both regions (it is a mutex here), failback, more than two regions, real network behavior, and real cross-region replication services. The reason a prober's lag number can be stale is exactly that they are all in one process.
+
 ## Layout
 
 - `backend/` an HTTP service you can crash, restart, break (503s), slow, mark unhealthy, or shut down gracefully
@@ -37,6 +90,8 @@ Tests skip a proxy if its binary is not on `PATH`.
 - `load/` constant-rate load generator and summaries
 - `scenarios/` the situations above, shared by the tests and the recorder
 - `cmd/record/` runs everything and writes `docs/data.json`
+- `failover/` the regional failover model: regions, replication, fencing, orchestrator, breaker, drill
+- `cmd/failover-drill/` runs the failover drills and prints measured RTO and RPO
 
 ## Not covered
 

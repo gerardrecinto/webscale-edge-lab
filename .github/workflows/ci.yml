@@ -22,4 +22,5 @@ jobs:
           echo "$HOME/bin" >> "$GITHUB_PATH"
           "$HOME/bin/envoy" --version | head -1
       - run: go vet ./...
+      - run: go test -race -count=1 ./failover
       - run: go test ./... -count=1 -v
