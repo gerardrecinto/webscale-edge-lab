@@ -81,7 +81,7 @@ What I ran into:
 - **The lag figure is a lower bound.** Once the primary is dead nobody can ask it for its sequence, so the gate uses the highest sequence a prober saw before the fault. Writes acknowledged between the last probe and the crash are not counted, so the real loss can be higher than the gate believed.
 - **Fencing needs a path to the old primary or a lease.** Fencing by epoch only works if the old primary learns the epoch. The lease is what covers the case where it cannot be reached, and it costs RTO.
 
-Not covered: a real fence store outside both regions (it is a mutex here), failback, more than two regions, real network behavior, and real cross-region replication services. The reason a prober's lag number can be stale is exactly that they are all in one process.
+Not covered: a real fence store outside both regions (it is a mutex here), failback, more than two regions, real network behavior, and real cross-region replication services.
 
 ## Layout
 
