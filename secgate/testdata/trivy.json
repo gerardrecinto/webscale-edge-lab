@@ -1,0 +1,28 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "registry.example.com/checkout:2.4.1",
+  "ArtifactType": "container_image",
+  "Results": [
+    {
+      "Target": "checkout (gobinary)",
+      "Class": "lang-pkgs",
+      "Type": "gobinary",
+      "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-2023-44487", "PkgName": "golang.org/x/net", "InstalledVersion": "0.15.0", "FixedVersion": "0.17.0", "Severity": "HIGH", "Title": "HTTP/2 rapid reset can cause excessive resource consumption"},
+        {"VulnerabilityID": "CVE-2024-24790", "PkgName": "stdlib", "InstalledVersion": "1.21.9", "FixedVersion": "1.21.11", "Severity": "CRITICAL", "Title": "net/netip: unexpected behavior from Is methods for IPv4-mapped IPv6 addresses"},
+        {"VulnerabilityID": "CVE-2022-41723", "PkgName": "golang.org/x/net", "InstalledVersion": "0.15.0", "FixedVersion": "0.7.0", "Severity": "MEDIUM", "Title": "avoid quadratic complexity in HPACK decoding"}
+      ]
+    },
+    {
+      "Target": "debian 12.5",
+      "Class": "os-pkgs",
+      "Type": "debian",
+      "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-2023-4911", "PkgName": "libc6", "InstalledVersion": "2.36-9", "FixedVersion": "2.36-9+deb12u3", "Severity": "HIGH", "Title": "glibc: buffer overflow in ld.so leading to privilege escalation"},
+        {"VulnerabilityID": "CVE-2010-4756", "PkgName": "libc6", "InstalledVersion": "2.36-9", "Severity": "LOW", "Title": "glibc: glob implementation can cause excessive CPU and memory consumption"},
+        {"VulnerabilityID": "CVE-2019-1010022", "PkgName": "libc6", "InstalledVersion": "2.36-9", "Severity": "CRITICAL", "Title": "glibc: stack guard protection bypass"}
+      ]
+    },
+    {"Target": "app/requirements.txt", "Class": "lang-pkgs", "Type": "pip"}
+  ]
+}

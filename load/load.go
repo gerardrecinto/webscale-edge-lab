@@ -16,6 +16,7 @@ type Sample struct {
 	LatencyMs int64  `json:"latencyMs"`
 	Status    int    `json:"status"` // 0 means the request failed before a response
 	Backend   string `json:"backend"`
+	Version   string `json:"version,omitempty"`
 }
 
 type Run struct {
@@ -83,6 +84,7 @@ func Start(ctx context.Context, o Options) *Generator {
 				if err == nil {
 					s.Status = resp.StatusCode
 					s.Backend = resp.Header.Get("X-Backend")
+					s.Version = resp.Header.Get("X-Version")
 					io.Copy(io.Discard, resp.Body)
 					resp.Body.Close()
 				}
@@ -162,4 +164,23 @@ func One(url string, hdr map[string]string) Sample {
 		resp.Body.Close()
 	}
 	return s
+}
+
+// ByVersion returns requests and failures for the window that came back from
+// each build. A failed request has no version header, so failures are counted
+// under the empty version.
+func ByVersion(s []Sample, from, to int64) map[string][2]int {
+	m := map[string][2]int{}
+	for _, x := range s {
+		if x.AtMs < from || x.AtMs >= to {
+			continue
+		}
+		c := m[x.Version]
+		c[0]++
+		if x.Status != 200 {
+			c[1]++
+		}
+		m[x.Version] = c
+	}
+	return m
 }

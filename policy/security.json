@@ -1,0 +1,6 @@
+{
+  "failOn": "HIGH",
+  "fixedOnly": true,
+  "maxWaivers": 5,
+  "waivers": []
+}

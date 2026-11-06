@@ -4,6 +4,8 @@ The same load-balancing situations run through real HAProxy and Envoy processes 
 
 **Live demo:** https://gerardrecinto.github.io/webscale-edge-lab/ shows the recorded results side by side: failover, rolling deploy under load, a backend that fails requests but passes health checks, overload shedding, per-client rate limiting and consistent hashing.
 
+**Also in this repo:** a push-button deploy controller (`deploy/`, `cmd/pushbutton`) that rolls a build across a fleet with a hard cap on hosts out of rotation, a canary judged on live numbers and automatic rollback, tested against real HAProxy, Nginx and Apache under load; a CVE and header gate (`secgate/`); a Splunk event sender (`splunk/`); and a `/proc` based host diagnosis tool (`hostdoctor/`). See "Push-button deploys" below.
+
 Personal learning project: loopback only, one machine, HAProxy 3.4.4 and Envoy 1.38.3 locally (HAProxy from apt and Envoy 1.31 from the official image in CI). No VIPs, no real network, no production traffic.
 
 ## Scenarios (`go test ./... -v`)
@@ -83,6 +85,78 @@ What I ran into:
 
 Not covered: a real fence store outside both regions (it is a mutex here), failback, more than two regions, real network behavior, and real cross-region replication services.
 
+## Push-button deploys
+
+`deploy/` is a controller that rolls a build across many hosts without taking the service down. It does not care which load balancer is in front: a `Target` is one host that can be drained, updated, verified and put back.
+
+The rules it enforces, each with a test:
+
+| Rule | How it is tested |
+|---|---|
+| At most N hosts out of rotation at once | 1000 simulated hosts, batch 50: the controller's own counter and the simulator's independent count of serving hosts both stay inside the limit |
+| A host is only put back after the new build passes its own readiness check, checked directly and not through the balancer | a build that fails every request is rolled out to real HAProxy under load: zero client requests fail and it never answers one |
+| The first failure stops the rollout and restores every touched host, failed ones first | host 437 of 1000 fails verification: all 1000 end on the old build, still inside the batch limit |
+| A canary has to look as good as the old build on live traffic, and fails closed without enough traffic | a build that passes `/healthz` but fails every third request: caught on one instance, 2.3% of requests failed in total, none after the rollback |
+| A rollback that cannot finish is reported, not hidden | `rollback_failed` status and exit code 3 |
+| Re-running after a cancel resumes, and finishes hosts that were updated but never put back | abort at host 30 of 100, run again, all 100 serving the new build |
+
+### Measured against real proxies
+
+Real HAProxy 2.8, Nginx 1.24 and Apache 2.4 in front of 6 instances (each takes 700 ms to start), 200 requests per second from clients for the whole deploy, no more than 2 instances out at once. Recorded by `cmd/record-deploy`, results in `docs/data.json` and on the Pages viewer.
+
+| Proxy | How an instance leaves rotation | Deploy time | Requests | Failed |
+|---|---|---|---|---|
+| HAProxy | runtime API: `set server be/NAME state drain`, wait for the session count to reach 0 | 3.8 s | 1152 | 0 |
+| Nginx | server written as `down`, graceful reload (SIGHUP), wait for old workers to exit | 3.5 s | 1088 | 0 |
+| Apache | member written as `status=+D`, graceful restart (SIGUSR1) | 5.9 s | 1568 | 0 |
+
+Requests were answered by both builds during every deploy (for example 554 from v1 and 598 from v2 on HAProxy), so the traffic really did span the swap. Four real JVMs (`java-app/`, built with Gradle) were also replaced behind HAProxy: 364 requests, 0 failed, each JVM drained on SIGTERM and exited before its replacement started.
+
+### On a simulated fleet
+
+`pushbutton demo` runs the same controller on 1000 in-memory hosts: 5% batches finish in about 100 ms with never more than 50 out and never fewer than 950 serving. `pushbutton serve` puts a REST API and a web page over a fleet of 200 (screenshot below, taken in the middle of a rollout with a 2 host canary). The API takes an optional bearer token for writes, keeps one deployment running at a time, validates every field, and serves the page under a CSP that allows no inline script.
+
+![pushbutton during a rollout](docs/assets/pushbutton-ui.png)
+
+### Real fleets
+
+`pushbutton deploy -fleet fleet.json -version v2 -batch 5 -canary 2` drives real hosts through shell commands you give it, with `{{.Host}}` and `{{.Version}}` filled in: ssh and systemctl, a curl to a balancer API, anything. See `examples/fleet.ssh.json`. It reads every host's state first (32 at a time by default), refuses hostnames or versions that are not plain identifiers so a bad inventory line cannot inject shell, supports `-dry-run`, writes a JSON report, and exits 0 done, 1 rolled back, 3 rollback failed, 4 cancelled. A canary reads its numbers from an `observeCommand` that prints JSON, so it can be a Splunk or Prometheus query.
+
+### The rest of the toolkit
+
+- `secgate/`, `cmd/secgate`: reads a Trivy JSON report, fails the pipeline above a severity threshold, only for findings that have a fix if you want, with waivers that need a reason and an expiry (an expired waiver blocks again). `secgate headers URL` checks a running service against the OWASP Secure Headers Project list: HSTS, CSP, frame protection, nosniff, referrer and permissions policy, and leaked framework or server versions. The lab backend, the pushbutton service and the Java app all pass it.
+- `splunk/`: sends deploy events to a Splunk HTTP Event Collector in batches, retries 5xx and network errors with backoff, does not retry a bad token, never blocks the deploy on Splunk. `splunk/searches.md` has the searches I would build on those events.
+- `hostdoctor/`, `cmd/hostdoctor`: reads `/proc` and says what is wrong and what to run next: CLOSE_WAIT leaks, TIME_WAIT against the ephemeral port range, accept queues that are filling, ListenDrops, conntrack table pressure, file descriptors, inodes (the "df looks fine but writes fail" case), memory, load and pressure stall information. The accept-queue reading is checked against a real listener that never calls `accept()`.
+- `java-app/`: a small JVM service with `/healthz`, an in-flight gauge and a SIGTERM shutdown hook that stops reporting ready, finishes its requests and exits. Built and tested with Gradle (`gradle -p java-app build`).
+- `Jenkinsfile`: Gradle and Go builds in parallel, Trivy and the gate, a dry run of the rollout, then an approved rollout with a canary. Not run on a Jenkins server.
+- `infra/alicloud/`: an internal SLB with connection draining in front of ECS instances. Written from the provider docs, not validated or applied (see below).
+
+Run it:
+
+```
+go run ./cmd/pushbutton demo                          # 1000 simulated hosts
+go run ./cmd/pushbutton demo -fail host-0437          # one host fails readiness, watch the rollback
+go run ./cmd/pushbutton live -proxy nginx             # real Nginx, real traffic during the deploy
+go run ./cmd/pushbutton live -proxy haproxy -canary 1 -version v3-flaky
+go run ./cmd/pushbutton serve                         # http://127.0.0.1:8090
+go run ./cmd/hostdoctor
+go test -race ./...                                   # proxy and JVM tests skip when the binaries are not installed
+```
+
+### What I ran into
+
+- **A swap with no startup time proves nothing.** My first HAProxy run reported "succeeded in 10 ms" with zero failures, which looked great and meant about two requests overlapped the deploy. I added a 700 ms start time to the test instances, and the deploy then took 3.8 s with over a thousand requests spanning it.
+- **HAProxy marks a server UP again as soon as you set it back to ready,** because its health state survives a drain. That is why the controller verifies the instance directly before it re-enables it and does not wait for the balancer's own check to catch a bad build.
+- **Open-source Nginx has no active health checks,** so the same direct verification is the only gate. The reload router produced 12 reloads for 6 instances: my coalescing only helps when changes land at the same moment, and batches of 2 mostly did not. At a thousand instances I would change config in bigger steps.
+- **Apache gives no signal that old children are gone after a graceful restart.** I wait 400 ms and then also wait for the instance's own in-flight gauge to reach zero. Apache was the slowest of the three (5.9 s against 3.5 s for Nginx).
+- **Two bugs of mine in the controller, found by thinking about failure and then written as tests.** A host that failed mid-update was not counted as out of rotation during rollback, so the peak figure could under-report. And a host updated but cancelled before being re-enabled was treated as already done on the next run and left out of rotation.
+- **The Splunk batcher first flushed inline when full, which contradicted its own comment that `Add` never blocks.** Fixed by signalling the background sender. The race detector also caught my test hook being called from several goroutines, which the engine documents.
+- **Maven Central answered 429 to the Gradle test dependencies** from this environment. Gradle caches what it gets, so a few retries finished the build.
+
+### Not covered
+
+The real-fleet mode has only been run against local shell commands standing in for hosts, not against ssh and a production balancer. The Jenkinsfile has not run on Jenkins. The Terraform in `infra/alicloud/` was written from the provider documentation without being able to reach the provider registry, so it has not been validated or applied. The Splunk searches have not run against Splunk; only the sender was tested, against a stand-in collector that checks the envelope, token, batching and retries. Envoy is not driven by the controller (its rolling deploy is the existing health-check drain scenario above). The canary judges error rate and p95 latency only, on one machine with no real network. No TLS anywhere. All of this ran on loopback.
+
 ## Layout
 
 - `backend/` an HTTP service you can crash, restart, break (503s), slow, mark unhealthy, or shut down gracefully
@@ -92,6 +166,9 @@ Not covered: a real fence store outside both regions (it is a mutex here), failb
 - `cmd/record/` runs everything and writes `docs/data.json`
 - `failover/` the regional failover model: regions, replication, fencing, orchestrator, breaker, drill
 - `cmd/failover-drill/` runs the failover drills and prints measured RTO and RPO
+- `deploy/` the deploy controller, `deploy/live/` its targets for real proxies and JVMs, `deploy/fleetfile/` the fleet JSON loader
+- `service/` the REST API and web page, `cmd/pushbutton` the command line, `cmd/record-deploy` records the deploy results
+- `secgate/`, `splunk/`, `hostdoctor/` and their commands, `java-app/`, `infra/alicloud/`, `Jenkinsfile`, `policy/`, `examples/`
 
 ## Not covered
 
