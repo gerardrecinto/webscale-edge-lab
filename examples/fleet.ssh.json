@@ -1,0 +1,19 @@
+{
+  "hostsFile": "examples/hosts.txt",
+  "vars": {
+    "ssh": "ssh -o BatchMode=yes -o ConnectTimeout=5",
+    "lb": "https://lb-admin.example.com/api/pools/web/members",
+    "svc": "shop-api"
+  },
+  "inventoryParallel": 32,
+  "stepTimeoutSec": 180,
+  "commands": {
+    "version": "{{.Vars.ssh}} {{.Host}} cat /opt/{{.Vars.svc}}/VERSION",
+    "inRotation": "curl -fsS {{.Vars.lb}}/{{.Host}} | grep -q '\"state\":\"enabled\"'",
+    "drain": "curl -fsS -X PUT {{.Vars.lb}}/{{.Host}} -d '{\"state\":\"drain\"}' && {{.Vars.ssh}} {{.Host}} 'while [ \"$(curl -fsS localhost:8080/debug/inflight)\" != 0 ]; do sleep 0.5; done'",
+    "update": "{{.Vars.ssh}} {{.Host}} 'sudo /opt/{{.Vars.svc}}/install {{.Version}} && sudo systemctl restart {{.Vars.svc}}'",
+    "verify": "{{.Vars.ssh}} {{.Host}} 'curl -fsS localhost:8080/healthz >/dev/null && curl -fsS -o /dev/null -D - localhost:8080/ | grep -iq \"^x-version: {{.Version}}\"'",
+    "enable": "curl -fsS -X PUT {{.Vars.lb}}/{{.Host}} -d '{\"state\":\"enabled\"}'"
+  },
+  "observeCommand": "./scripts/splunk-canary.sh {{.Version}} {{.SinceUnix}}"
+}

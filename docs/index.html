@@ -58,6 +58,12 @@ a{color:var(--link)}code{font:13px ui-monospace,Menlo,monospace}
 <h2>Not covered</h2>
 <div class="card"><p>Virtual IPs and failover between load balancers (keepalived, VRRP), BGP and ECMP, anycast, L4 balancing and Maglev-style hashing, TLS termination, HTTP/2 and gRPC, multiple hosts, real network latency, and any throughput benchmark. Envoy ran with <code>--concurrency 1</code> so round robin is deterministic; with several worker threads each balances independently. HAProxy 3.4.4 and Envoy 1.38.3 on macOS.</p></div>
 
+<h2>Push-button deploys under live traffic</h2>
+<div class="card"><p class="mut" id="depnote"></p><table id="deptab"></table>
+<p class="mut">Every request is a real HTTP request from a client running throughout the deploy. "Out at once" is the most instances the controller had out of rotation; the limit is the batch size. A canary that fails is the point of that row: a build that passes its health check but fails a third of its requests reached only the canary instance, and was rolled back.</p>
+<h3>The same controller on a simulated fleet of 1000 hosts</h3><table id="simtab"></table>
+<p class="mut">In-memory hosts, 1 ms per step. The simulator counts hosts in rotation itself, so the "fewest serving" column does not rely on the controller's own bookkeeping.</p></div>
+
 <h2>References</h2>
 <div class="card"><ul>
 <li>HAProxy: <a href="https://docs.haproxy.org/3.0/configuration.html">configuration manual</a> and <a href="https://docs.haproxy.org/3.0/management.html">management guide</a> (stick tables, health checks, <code>observe</code>, <code>hash-type</code>, runtime API)</li>
@@ -106,6 +112,17 @@ fetch('data.json').then(r=>r.json()).then(D=>{
 
   const hs=[['haproxy/hash-consistent','HAProxy consistent hash'],['haproxy/hash-modulo','HAProxy default (map-based) hash'],['envoy/hash-consistent','Envoy ring hash']];
   $('hash').innerHTML='<svg viewBox="0 0 460 120" role="img">'+hs.map((e,i)=>{const v=get('consistent-hash',e[0]).metrics.unrelatedMovedFraction;return '<text x="0" y="'+(24+i*32)+'">'+e[1]+'</text><rect x="170" y="'+(12+i*32)+'" width="'+Math.max(2,v*170/0.6)+'" height="16" fill="'+(v<0.05?'var(--c1)':v<0.3?'var(--c2)':'var(--bad)')+'"/><text x="'+(176+Math.max(2,v*170/0.6))+'" y="'+(24+i*32)+'">'+(v*100).toFixed(0)+'% of unaffected users moved</text>'}).join('')+'</svg><p class="mut">Every user always reached the same backend on repeat. Users who were on the removed backend are re-homed in every case; the bars show users who were <em>not</em> on it and still changed backend.</p>';
+
+  if(D.deploy){
+    const d=D.deploy,esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    $('depnote').textContent='Recorded '+d.recorded+' with '+d.versions.haproxy+', '+d.versions.nginx+', '+d.versions.apache+'. '+d.note;
+    let t='<tr><th>Scenario</th><th>Proxy</th><th>Result</th><th class="n">Seconds</th><th class="n">Out at once / limit</th><th class="n">Requests</th><th class="n">Failed</th><th>Answered by build</th></tr>';
+    d.rows.forEach(r=>{t+='<tr><td>'+esc(r.scenario)+'</td><td>'+esc(r.proxy)+'</td><td>'+esc(r.status.replace('_',' '))+'</td><td class="n">'+(r.durationMs/1000).toFixed(1)+'</td><td class="n">'+r.peakOut+' / '+r.limit+'</td><td class="n">'+r.requests+'</td><td class="n">'+r.failed+'</td><td>'+esc(Object.keys(r.builds).sort().map(k=>(k||'no response')+': '+r.builds[k]).join(', '))+'</td></tr>'});
+    $('deptab').innerHTML=t;
+    let s='<tr><th>Case</th><th>Result</th><th class="n">Milliseconds</th><th class="n">Out at once</th><th class="n">Fewest serving</th><th>Builds at the end</th></tr>';
+    d.sim.forEach(r=>{s+='<tr><td>'+(r.failedTarget?'one host fails its readiness check':'clean rollout, 5% batches')+'</td><td>'+esc(r.status.replace('_',' '))+'</td><td class="n">'+r.durationMs+'</td><td class="n">'+r.peakOut+'</td><td class="n">'+r.fewestServing+' / '+r.hosts+'</td><td>'+esc(Object.keys(r.builds).sort().map(k=>k+': '+r.builds[k]).join(', '))+'</td></tr>'});
+    $('simtab').innerHTML=s;
+  }
   $('cfgh').textContent=D.configs.haproxy;$('cfge').textContent=D.configs.envoy;
 }).catch(e=>{document.querySelector('main p').textContent='Could not load data.json. Serve this folder over HTTP: python3 -m http.server -d docs'});
 </script>

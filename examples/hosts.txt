@@ -1,0 +1,4 @@
+# the web tier, one host per line
+web-001.example.com
+web-002.example.com
+web-003.example.com

@@ -1,0 +1,40 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'dev.pushbutton'
+version = providers.gradleProperty('appVersion').getOrElse('0.0.0-dev')
+
+// Compile for Java 17 on any JDK from 17 up, so a build agent does not need one exact install.
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application {
+    mainClass = 'dev.pushbutton.Main'
+}
+
+jar {
+    manifest {
+        attributes 'Main-Class': 'dev.pushbutton.Main', 'Implementation-Version': project.version
+    }
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'failed', 'skipped'
+        exceptionFormat = 'full'
+    }
+}

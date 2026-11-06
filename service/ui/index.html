@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pushbutton</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>pushbutton</h1>
+    <span class="badge" title="No real hosts are touched. The controller is the real one; the fleet is in memory.">simulated fleet</span>
+  </header>
+  <p class="lede">One click rolls a new build across the fleet without taking it down. The controller keeps a fixed share of hosts in rotation, checks each host before it takes traffic, watches a canary on live numbers, and rolls everything back on the first failure.</p>
+
+  <form id="deploy" aria-label="Deployment settings">
+    <label>Build <input id="version" value="v2" maxlength="32" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,31}" autocomplete="off"></label>
+    <label>Hosts out at once (%) <input id="batch" type="number" min="1" max="50" value="5"></label>
+    <label>Canary hosts <input id="canary" type="number" min="0" value="0"></label>
+    <fieldset>
+      <legend>Break something on purpose</legend>
+      <label class="check"><input id="failHost" type="checkbox"> host-0042 fails its readiness check on the new build</label>
+      <label class="check"><input id="badCanary" type="checkbox"> the canary looks bad on live traffic (needs canary hosts)</label>
+    </fieldset>
+    <label>API token <input id="token" type="password" autocomplete="off" placeholder="only if the server was started with one"></label>
+    <div class="buttons">
+      <button id="go" type="submit">Deploy</button>
+      <button id="cancel" type="button" disabled>Cancel</button>
+    </div>
+    <p id="error" role="alert" class="error"></p>
+  </form>
+
+  <section aria-label="Progress">
+    <div class="tiles">
+      <div class="tile"><span class="k">Status</span><span id="status" class="v" aria-live="polite">idle</span></div>
+      <div class="tile"><span class="k">Updated</span><span id="done" class="v">0 / 0</span></div>
+      <div class="tile"><span class="k">Out of rotation now</span><span id="out" class="v">0</span></div>
+      <div class="tile"><span class="k">Most out at once</span><span id="peak" class="v">0</span></div>
+      <div class="tile"><span class="k">Fewest serving</span><span id="minin" class="v">-</span></div>
+    </div>
+    <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="bar"><span id="barfill"></span></div>
+    <p id="reason" class="reason"></p>
+  </section>
+
+  <section aria-label="Fleet">
+    <h2>Fleet <span id="versions" class="mut"></span></h2>
+    <div id="grid" class="grid" role="img" aria-label="One square per host, coloured by state"></div>
+    <ul class="legend">
+      <li><i class="s old"></i>old build, serving</li>
+      <li><i class="s new"></i>new build, serving</li>
+      <li><i class="s drain"></i>draining</li>
+      <li><i class="s upd"></i>updating</li>
+      <li><i class="s out"></i>out, being checked</li>
+    </ul>
+  </section>
+
+  <section aria-label="Events">
+    <h2>Events</h2>
+    <ol id="log" class="log"></ol>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

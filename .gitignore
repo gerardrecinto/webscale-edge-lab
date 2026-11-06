@@ -1,1 +1,6 @@
 .DS_Store
+
+java-app/build/
+java-app/.gradle/
+*.class
+/pushbutton

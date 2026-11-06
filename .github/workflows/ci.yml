@@ -6,14 +6,21 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23"
-      - name: Install HAProxy
-        run: sudo apt-get update && sudo apt-get install -y haproxy && haproxy -v | head -1 && sudo systemctl stop haproxy || true
+      - name: Install HAProxy, Nginx and Apache
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y haproxy nginx apache2
+          haproxy -v | head -1
+          nginx -v
+          apache2 -v | head -1
+          sudo systemctl stop haproxy nginx apache2 || true
+          sudo systemctl disable haproxy nginx apache2 || true
       - name: Get an Envoy binary from the official image
         run: |
           docker create --name envoy-src envoyproxy/envoy:v1.31-latest
@@ -21,6 +28,21 @@ jobs:
           docker cp envoy-src:/usr/local/bin/envoy "$HOME/bin/envoy"
           echo "$HOME/bin" >> "$GITHUB_PATH"
           "$HOME/bin/envoy" --version | head -1
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+      - name: Build and test the Java service with Gradle
+        run: |
+          gradle -p java-app --no-daemon build
+          echo "JAVA_APP_JAR=$PWD/java-app/build/libs/shop-api-0.0.0-dev.jar" >> "$GITHUB_ENV"
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
       - run: go vet ./...
-      - run: go test -race -count=1 ./failover
-      - run: go test ./... -count=1 -v
+      - name: Race detector on the packages with concurrency in them
+        run: go test -race -count=1 ./failover ./deploy ./deploy/fleetfile ./secgate ./splunk ./hostdoctor ./service ./cmd/...
+      - name: Everything, including the real proxies and JVMs
+        run: go test ./... -count=1 -v

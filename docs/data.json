@@ -2984,5 +2984,162 @@
  "versions": {
   "envoy": "1.38.3",
   "haproxy": "3.4.4"
+ },
+ "deploy": {
+  "note": "Linux container, loopback only, backends and proxies on one machine. Each instance takes 700 ms to start, as a stand-in for a real service.",
+  "recorded": "2026-11-06",
+  "rows": [
+   {
+    "scenario": "rolling-deploy",
+    "proxy": "haproxy",
+    "instances": 6,
+    "version": "v2",
+    "status": "succeeded",
+    "durationMs": 3766,
+    "peakOut": 2,
+    "limit": 2,
+    "requests": 1152,
+    "failed": 0,
+    "builds": {
+     "v1": 554,
+     "v2": 598
+    },
+    "lastFailMs": -1,
+    "endedAtMs": 4767,
+    "finalBuilds": {
+     "v2": 6
+    }
+   },
+   {
+    "scenario": "rolling-deploy",
+    "proxy": "nginx",
+    "instances": 6,
+    "version": "v2",
+    "status": "succeeded",
+    "durationMs": 3454,
+    "peakOut": 2,
+    "limit": 2,
+    "requests": 1088,
+    "failed": 0,
+    "builds": {
+     "v1": 540,
+     "v2": 548
+    },
+    "reloads": 12,
+    "lastFailMs": -1,
+    "endedAtMs": 4455,
+    "finalBuilds": {
+     "v2": 6
+    }
+   },
+   {
+    "scenario": "rolling-deploy",
+    "proxy": "apache2",
+    "instances": 6,
+    "version": "v2",
+    "status": "succeeded",
+    "durationMs": 5852,
+    "peakOut": 2,
+    "limit": 2,
+    "requests": 1568,
+    "failed": 0,
+    "builds": {
+     "v1": 741,
+     "v2": 827
+    },
+    "reloads": 12,
+    "lastFailMs": -1,
+    "endedAtMs": 6852,
+    "finalBuilds": {
+     "v2": 6
+    }
+   },
+   {
+    "scenario": "canary-flaky-build",
+    "proxy": "haproxy",
+    "instances": 6,
+    "version": "v3-flaky",
+    "status": "rolled_back",
+    "reason": "canary failed: canary error rate 33.0% is over the 5.0% ceiling",
+    "durationMs": 5338,
+    "peakOut": 1,
+    "limit": 2,
+    "requests": 1464,
+    "failed": 34,
+    "builds": {
+     "v1": 1363,
+     "v3-flaky": 101
+    },
+    "canary": {
+     "Requests": 100,
+     "Errors": 33,
+     "P95": 0
+    },
+    "baseline": {
+     "Requests": 723,
+     "Errors": 0,
+     "P95": 0
+    },
+    "lastFailMs": 5120,
+    "endedAtMs": 6339,
+    "finalBuilds": {
+     "v1": 6
+    }
+   },
+   {
+    "scenario": "readiness-gate-broken-build",
+    "proxy": "haproxy",
+    "instances": 4,
+    "version": "v4-broken",
+    "status": "rolled_back",
+    "reason": "b0: verify: not ready in time: a real request returned 503",
+    "durationMs": 5943,
+    "peakOut": 1,
+    "limit": 1,
+    "requests": 1184,
+    "failed": 0,
+    "builds": {
+     "v1": 1184
+    },
+    "lastFailMs": -1,
+    "endedAtMs": 6944,
+    "finalBuilds": {
+     "v1": 4
+    }
+   }
+  ],
+  "sim": [
+   {
+    "batch": 50,
+    "builds": {
+     "v2": 1000
+    },
+    "durationMs": 97,
+    "failedTarget": "",
+    "fewestServing": 950,
+    "hosts": 1000,
+    "peakOut": 50,
+    "reason": "",
+    "status": "succeeded"
+   },
+   {
+    "batch": 50,
+    "builds": {
+     "v1": 1000
+    },
+    "durationMs": 86,
+    "failedTarget": "host-0437",
+    "fewestServing": 950,
+    "hosts": 1000,
+    "peakOut": 50,
+    "reason": "host-0437: verify: readiness probe returned 503",
+    "status": "rolled_back"
+   }
+  ],
+  "versions": {
+   "apache": "Server version: Apache/2.4.58 (Ubuntu)",
+   "haproxy": "HAProxy version 2.8.30-0ubuntu0.24.04.2 2026/10/27 - https://haproxy.org/",
+   "nginx": "nginx version: nginx/1.24.0 (Ubuntu)"
+  }
  }
 }
