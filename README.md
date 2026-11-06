@@ -120,7 +120,7 @@ Requests were answered by both builds during every deploy (for example 554 from 
 
 ### Real fleets
 
-`pushbutton deploy -fleet fleet.json -version v2 -batch 5 -canary 2` drives real hosts through shell commands you give it, with `{{.Host}}` and `{{.Version}}` filled in: ssh and systemctl, a curl to a balancer API, anything. See `examples/fleet.ssh.json`. It reads every host's state first (32 at a time by default), refuses hostnames or versions that are not plain identifiers so a bad inventory line cannot inject shell, supports `-dry-run`, writes a JSON report, and exits 0 done, 1 rolled back, 3 rollback failed, 4 cancelled. A canary reads its numbers from an `observeCommand` that prints JSON, so it can be a Splunk or Prometheus query.
+`pushbutton deploy -fleet fleet.json -version v2 -batch 5 -canary 2` drives real hosts through shell commands you give it, with `{{.Host}}` and `{{.Version}}` filled in: ssh and systemctl, a curl to a balancer API, anything. See `examples/fleet.ssh.json`. It reads every host's state first (16 at a time by default), refuses hostnames or versions that are not plain identifiers so a bad inventory line cannot inject shell, supports `-dry-run`, writes a JSON report, and exits 0 done, 1 rolled back, 3 rollback failed, 4 cancelled. A canary reads its numbers from an `observeCommand` that prints JSON, so it can be a Splunk or Prometheus query.
 
 ### The rest of the toolkit
 
